@@ -1,16 +1,16 @@
-
 package com.tencent.yolov8ncnn;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
-
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.os.Bundle;
-
 import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -30,9 +30,8 @@ import java.io.InputStream;
 public class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST_CODE = 0;
     private static final int OPEN_GALLERY_REQUEST_CODE = 1;
-    private static final int TAKE_PHOTO_REQUEST_CODE = 2;
 
-    private String[]class_name=new String[]{
+    private String[] class_name = new String[]{
             "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
             "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
             "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
@@ -64,50 +63,106 @@ public class MainActivity extends Activity {
         if (init) Toast.makeText(this, "模型加载成功", Toast.LENGTH_SHORT).show();
         else Toast.makeText(this, "模型加载失败", Toast.LENGTH_SHORT).show();
 
-        btn_select_image = (Button) findViewById(R.id.btn_select_image);
-        btn_recognize = (Button) findViewById(R.id.btn_recognize);
-        tv_result = (TextView) findViewById(R.id.tv_result);
-        imageView = (ImageView) findViewById(R.id.imageView);
-
+        btn_select_image = findViewById(R.id.btn_select_image);
+        btn_recognize = findViewById(R.id.btn_recognize);
+        tv_result = findViewById(R.id.tv_result);
+        imageView = findViewById(R.id.imageView);
 
         btn_select_image.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-
                 applyPermission();
             }
         });
+
         btn_recognize.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 if (init && bitmap != null) {
-                    tv_result.setText("result:");
+                    tv_result.setText("结果:\n");
+
+                    // 记录预测开始时间
+                    long startTime = System.currentTimeMillis();
+
                     YoloAPI.Obj[] detect = yoloAPI.Detect(bitmap, true);
-                    if (detect != null && detect.length!=0) {
-                        String res = tv_result.getText().toString();
-                        res += class_name[detect[0].label] + " " + detect[0].prob;
-                        tv_result.setText(res);
+
+                    // 记录预测结束时间
+                    long endTime = System.currentTimeMillis();
+                    StringBuilder res = new StringBuilder();
+                    res.append(String.format("预测时间: %d 毫秒\n", (endTime - startTime)));
+
+                    if (detect != null && detect.length != 0) {
+                        for (YoloAPI.Obj obj : detect) {
+                            res.append(String.format("类别: %s, 概率: %.2f%%, 坐标: (%.2f, %.2f, %.2f, %.2f)\n",
+                                    class_name[obj.label],
+                                    obj.prob * 100,
+                                    obj.x, obj.y, obj.w, obj.h));
+                        }
+
+                        tv_result.setText(res.toString());
+
+                        // 绘制目标框
+                        Bitmap resultBitmap = drawBoundingBoxes(bitmap, detect);
+
+                        // 更新 ImageView 显示结果图像
+                        imageView.setImageBitmap(resultBitmap);
                     } else {
-                        String res = tv_result.getText().toString() + "无结果";
-                        tv_result.setText(res);
+                        tv_result.setText(tv_result.getText().toString() + "无结果\n");
                     }
-                } else if (bitmap == null)
+                } else if (bitmap == null) {
                     Toast.makeText(getApplicationContext(), "请选择图片", Toast.LENGTH_SHORT).show();
-                else if (!init)
+                } else if (!init) {
                     Toast.makeText(getApplicationContext(), "模型加载失败", Toast.LENGTH_SHORT).show();
+                }
             }
         });
+    }
 
+    /**
+     * 绘制检测到的目标框
+     */
+    private Bitmap drawBoundingBoxes(Bitmap bitmap, YoloAPI.Obj[] detect) {
+        Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+        Canvas canvas = new Canvas(mutableBitmap);
+        Paint paint = new Paint();
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(5);
+        paint.setColor(Color.RED);
+        paint.setAntiAlias(true);
+
+        Paint textPaint = new Paint();
+        textPaint.setColor(Color.YELLOW);
+        textPaint.setTextSize(40);
+        textPaint.setStyle(Paint.Style.FILL);
+        textPaint.setAntiAlias(true);
+
+        for (YoloAPI.Obj obj : detect) {
+            float left = obj.x;
+            float top = obj.y;
+            float right = obj.x + obj.w;
+            float bottom = obj.y + obj.h;
+
+            // 绘制矩形框
+            canvas.drawRect(left, top, right, bottom, paint);
+
+            // 绘制标签文字
+            String label = String.format("%s %.2f%%", class_name[obj.label], obj.prob * 100);
+            canvas.drawText(label, left, top - 10, textPaint);
+        }
+
+        return mutableBitmap;
     }
 
     /**
      * 申请动态权限
      */
     private void applyPermission() {
-        //检测权限
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            openGallery();
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
-            // 如果没有权限，则申请需要的权限
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, PERMISSION_REQUEST_CODE);
         } else {
@@ -115,28 +170,19 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * 用户选择是否开启权限操作后的回调；TODO 同意/拒绝
-     */
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // 用户同样授权
                 openGallery();
             } else {
-                // 用户拒绝授权
                 Toast.makeText(this, "你拒绝使用存储权限！", Toast.LENGTH_SHORT).show();
                 Log.d("HL", "你拒绝使用存储权限！");
             }
         }
-
     }
 
-    /**
-     * 打开相册
-     */
     private void openGallery() {
         Intent intent = new Intent(Intent.ACTION_PICK, null);
         intent.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
@@ -146,12 +192,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == OPEN_GALLERY_REQUEST_CODE) { // 检测请求码
+        if (requestCode == OPEN_GALLERY_REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 try {
                     InputStream inputStream = getContentResolver().openInputStream(data.getData());
                     Bitmap bitmap2 = BitmapFactory.decodeStream(inputStream);
-                    // TODO 把获取到的图片放到ImageView上
                     imageView.setImageBitmap(bitmap2);
                     bitmap = bitmap2;
                 } catch (FileNotFoundException e) {
@@ -160,5 +205,4 @@ public class MainActivity extends Activity {
             }
         }
     }
-
 }
